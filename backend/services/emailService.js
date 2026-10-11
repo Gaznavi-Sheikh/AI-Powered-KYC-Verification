@@ -54,8 +54,20 @@ const sendOtpEmail = async (toEmail, otp) => {
     // Never let SMTP's own error object (can include auth/transport
     // detail) propagate as-is - normalize to a generic message. The
     // caller (controllers/auth.js) logs err.message server-side only.
-    throw new Error('Email provider rejected the request');
-  }
+    const safeMessage = String(err.message || 'Unknown email error')
+    .replace(process.env.SMTP_PASS || '\u0000', '[REDACTED]');
+
+  console.error('Password reset email SMTP failure:', {
+    code: err.code,
+    responseCode: err.responseCode,
+    command: err.command,
+    message: safeMessage
+  });
+
+  throw new Error('Email provider rejected the request');
+}
+  //   throw new Error('Email provider rejected the request');
+  // }
 };
 
 const sendLoginOtpEmail = async (toEmail, otp) => {
