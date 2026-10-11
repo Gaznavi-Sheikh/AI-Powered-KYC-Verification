@@ -1,0 +1,141 @@
+body {
+  font-family: "DejaVu Sans", Arial, sans-serif;
+  color: #1e2033;
+  font-size: 11.5pt;
+  line-height: 1.5;
+  max-width: 920px;
+  margin: 0 auto;
+  padding: 0 10px;
+}
+
+h1 {
+  font-size: 23pt;
+  color: #1e2033;
+  margin-top: 0;
+  border-bottom: 3px solid #625bee;
+  padding-bottom: 10px;
+}
+
+h2 {
+  font-size: 16pt;
+  color: #1e2033;
+  margin-top: 30px;
+  padding-top: 6px;
+  border-top: 1px solid #d8d7ef;
+  page-break-before: always;
+}
+
+/* First chapter heading right after the cover/TOC should not force an extra blank page */
+h1 + h2, h1 + * h2:first-of-type {
+  page-break-before: avoid;
+}
+
+h3 {
+  font-size: 13pt;
+  color: #2a2d4a;
+  margin-top: 22px;
+}
+
+h4 {
+  font-size: 11.5pt;
+  color: #3a3d5c;
+  margin-top: 16px;
+}
+
+p, li {
+  font-size: 10.8pt;
+}
+
+a { color: #4740c7; text-decoration: none; }
+
+code {
+  font-family: "DejaVu Sans Mono", monospace;
+  font-size: 9.3pt;
+  background: #f1f0ff;
+  color: #3730a3;
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+pre {
+  background: #292b3d;
+  color: #e8e8f5;
+  padding: 10px 14px;
+  border-radius: 6px;
+  overflow-x: auto;
+  font-size: 9pt;
+  line-height: 1.4;
+}
+
+pre code {
+  background: none;
+  color: inherit;
+  padding: 0;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 14px 0;
+  font-size: 9.3pt;
+}
+
+th, td {
+  border: 1px solid #d8d7ef;
+  padding: 5px 8px;
+  text-align: left;
+  vertical-align: top;
+}
+
+th {
+  background: #eae9ff;
+  color: #1e2033;
+  font-weight: bold;
+}
+
+tr:nth-child(even) td {
+  background: #f7f7ff;
+}
+
+img {
+  max-width: 100%;
+  display: block;
+  margin: 14px auto;
+  border: 1px solid #e3e2f4;
+  border-radius: 6px;
+}
+
+blockquote {
+  border-left: 3px solid #625bee;
+  margin: 10px 0;
+  padding: 2px 14px;
+  color: #4a4d6a;
+  background: #f7f7ff;
+}
+
+hr {
+  border: none;
+  border-top: 1px solid #d8d7ef;
+  margin: 20px 0;
+}
+
+#TOC, nav#TOC {
+  page-break-after: always;
+}
+
+#TOC ul {
+  list-style: none;
+  padding-left: 14px;
+}
+
+#TOC > ul {
+  padding-left: 0;
+}
+
+#TOC a {
+  color: #1e2033;
+}
+
+em {
+  color: #3a3d5c;
+}

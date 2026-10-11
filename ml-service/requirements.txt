@@ -1,0 +1,37 @@
+Flask==3.1.0
+python-dotenv==1.0.1
+pytest==8.3.4
+
+# TFLite inference only - deliberately NOT the full tensorflow package
+# (ai-edge-litert is the official lightweight successor to tflite-runtime
+# and installs cleanly on Python 3.12, unlike the now-unmaintained
+# tflite-runtime wheels).
+ai-edge-litert==2.3.0
+pillow==12.3.0
+numpy==2.5.3
+
+# OCR (Phase 6). EasyOCR requires a PyTorch backend - there is no
+# lighter-weight option for it. CPU-only wheels are used deliberately
+# (this machine has no GPU and EasyOCR runs fine on CPU for this scope);
+# the default PyPI torch build pulls in much larger CUDA dependencies.
+# pip resolves torch/torchvision from this extra index first, matching
+# the +cpu build suffix pinned below. If you ever see a
+# "operator torchvision::nms does not exist" error, torch and
+# torchvision versions have drifted apart - reinstall both from this
+# same index together.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1
+torchvision==0.29.1
+easyocr==1.7.2
+
+# Structured field extraction (Phase 7)
+groq==1.7.0
+
+# Graph-based anomaly/risk signals (Phase 8). Deliberately NOT PyTorch
+# Geometric - confirmed pip-installable here, but a trainable GNN is not
+# used: with only ~15-20 real Verification records in this database,
+# there isn't enough data for learned graph embeddings to represent
+# genuine structure rather than noise. networkx gives the deterministic
+# graph-theoretic primitives (connected components, node degree) this
+# phase actually needs. See ml-service/README.md "GNN / Anomaly Method".
+networkx==3.6.1

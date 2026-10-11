@@ -1,0 +1,79 @@
+.learn-container{
+  min-height:100vh;
+  background: radial-gradient(circle at top,#0f172a,#020617);
+  color:white;
+  text-align:center;
+  padding:120px 40px;
+}
+
+/* TITLE */
+
+.learn-title{
+  font-size:52px;
+  font-weight:bold;
+  margin-bottom:20px;
+  color:white;
+
+  /* Glow effect */
+  text-shadow:0 0 10px rgba(56,189,248,0.6);
+}
+
+/* SUBTITLE */
+
+.learn-subtitle{
+  color:#94a3b8;
+  margin-bottom:60px;
+  font-size:18px;
+  max-width:700px;
+  margin-left:auto;
+  margin-right:auto;
+}
+
+/* GRID */
+
+.features-grid{
+  display:grid;
+  grid-template-columns:repeat(2,1fr);
+  gap:30px;
+  max-width:900px;
+  margin:auto;
+}
+
+/* CARDS */
+
+.feature-card{
+  background:#111827;
+  padding:30px;
+  border-radius:12px;
+  text-align:left;
+  border:1px solid #1f2937;
+  transition:0.3s;
+}
+
+.feature-card:hover{
+  transform:translateY(-6px);
+  border-color:#06b6d4;
+  box-shadow:0 0 20px rgba(6,182,212,0.4);
+}
+
+/* CARD TITLE */
+
+.feature-card h3{
+  margin-bottom:10px;
+  color:#38bdf8;
+  font-size:20px;
+}
+
+/* CARD TEXT */
+
+.feature-card p{
+  color:#cbd5f5;
+  line-height:1.6;
+}
+
+/* HIGHLIGHT CARD */
+
+.highlight{
+  border-color:#06b6d4;
+  box-shadow:0 0 15px rgba(6,182,212,0.3);
+}
