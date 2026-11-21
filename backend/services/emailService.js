@@ -1,45 +1,73 @@
-const nodemailer = require('nodemailer');
+// Brevo Transactional Email API (POST /v3/smtp/email) - replaces the former
+// Nodemailer/SMTP transport. Uses Node's built-in fetch (Node 18+), so no
+// extra dependency is needed. The public functions below keep the exact
+// signatures, subjects and HTML bodies they had under SMTP.
 
-let transporter = null;
+const BREVO_API_URL = 'https://api.brevo.com/v3/smtp/email';
+const REQUEST_TIMEOUT_MS = 15000;
 
-// Lazily creates and caches the Nodemailer transporter. No network call
-// happens here - just checks the config is present and constructs the
-// transport object.
-const getTransporter = () => {
-  if (transporter) return transporter;
+const isConfigured = () =>
+  Boolean(process.env.BREVO_API_KEY && process.env.BREVO_SENDER_EMAIL);
 
-  const { SMTP_HOST, SMTP_PORT, SMTP_SECURE, SMTP_USER, SMTP_PASS } = process.env;
-  if (!SMTP_HOST || !SMTP_PORT || !SMTP_USER || !SMTP_PASS) return null;
-
-  transporter = nodemailer.createTransport({
-    host: SMTP_HOST,
-    port: Number(SMTP_PORT),
-    secure: SMTP_SECURE === 'true',
-    auth: {
-      user: SMTP_USER,
-      pass: SMTP_PASS
-    }
-  });
-
-  return transporter;
-};
-
-const isConfigured = () => getTransporter() !== null;
-
-const sendOtpEmail = async (toEmail, otp) => {
-  const transport = getTransporter();
-  if (!transport) {
+// Central send routine. Throws a generic Error on any failure so callers
+// (controllers/auth.js) can never mistake a failed request for success.
+// Logs only non-sensitive diagnostics: HTTP status, Brevo error code and
+// message - never the API key, recipient address, OTP or reset URL.
+const sendEmail = async ({ toEmail, subject, html }) => {
+  if (!isConfigured()) {
     throw new Error('Email service is not configured');
   }
 
-  const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER;
+  // Tolerate BREVO_SENDER_EMAIL given as "Name <addr@host>" (the old
+  // SMTP_FROM style) as well as a bare address.
+  const rawSender = process.env.BREVO_SENDER_EMAIL.trim();
+  const match = rawSender.match(/^\s*"?([^"<]*?)"?\s*<([^>]+)>\s*$/);
+  const sender = { email: match ? match[2].trim() : rawSender };
+  const senderName = (match && match[1]) || process.env.BREVO_SENDER_NAME;
+  if (senderName) sender.name = senderName;
 
+  let response;
   try {
-    await transport.sendMail({
-      from: fromEmail,
-      to: toEmail,
-      subject: 'Verify your VerifyAI email',
-      html: `
+    response = await fetch(BREVO_API_URL, {
+      method: 'POST',
+      headers: {
+        'api-key': process.env.BREVO_API_KEY,
+        'Content-Type': 'application/json',
+        Accept: 'application/json'
+      },
+      body: JSON.stringify({
+        sender,
+        to: [{ email: toEmail }],
+        subject,
+        htmlContent: html
+      }),
+      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS)
+    });
+  } catch (err) {
+    console.error('Brevo email request failed (network/timeout):', err.name);
+    throw new Error('Email provider rejected the request');
+  }
+
+  if (!response.ok) {
+    let code;
+    let message;
+    try {
+      const body = await response.json();
+      code = body.code;
+      message = body.message;
+    } catch (_) {
+      // non-JSON error body - status alone is logged
+    }
+    console.error('Brevo email API error:', { status: response.status, code, message });
+    throw new Error('Email provider rejected the request');
+  }
+};
+
+const sendOtpEmail = async (toEmail, otp) => {
+  await sendEmail({
+    toEmail,
+    subject: 'Verify your VerifyAI email',
+    html: `
       <div style="font-family: Arial, Helvetica, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
         <h2 style="color:#0F172A; margin: 0 0 4px;">VerifyAI</h2>
         <p style="color:#334155; font-size: 15px; margin: 0 0 20px;">Verify your email address</p>
@@ -49,41 +77,14 @@ const sendOtpEmail = async (toEmail, otp) => {
         <p style="color:#94A3B8; font-size: 12px; margin: 0;">If you did not create a VerifyAI account, you can ignore this email.</p>
       </div>
     `
-    });
-  } catch (err) {
-    // Never let SMTP's own error object (can include auth/transport
-    // detail) propagate as-is - normalize to a generic message. The
-    // caller (controllers/auth.js) logs err.message server-side only.
-    const safeMessage = String(err.message || 'Unknown email error')
-    .replace(process.env.SMTP_PASS || '\u0000', '[REDACTED]');
-
-  console.error('Password reset email SMTP failure:', {
-    code: err.code,
-    responseCode: err.responseCode,
-    command: err.command,
-    message: safeMessage
   });
-
-  throw new Error('Email provider rejected the request');
-}
-  //   throw new Error('Email provider rejected the request');
-  // }
 };
 
 const sendLoginOtpEmail = async (toEmail, otp) => {
-  const transport = getTransporter();
-  if (!transport) {
-    throw new Error('Email service is not configured');
-  }
-
-  const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER;
-
-  try {
-    await transport.sendMail({
-      from: fromEmail,
-      to: toEmail,
-      subject: 'Your VerifyAI login code',
-      html: `
+  await sendEmail({
+    toEmail,
+    subject: 'Your VerifyAI login code',
+    html: `
       <div style="font-family: Arial, Helvetica, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
         <h2 style="color:#0F172A; margin: 0 0 4px;">VerifyAI</h2>
         <p style="color:#334155; font-size: 15px; margin: 0 0 20px;">Confirm it's you</p>
@@ -93,29 +94,14 @@ const sendLoginOtpEmail = async (toEmail, otp) => {
         <p style="color:#94A3B8; font-size: 12px; margin: 0;">If this wasn't you, change your password as soon as possible.</p>
       </div>
     `
-    });
-  } catch (err) {
-    // Never let SMTP's own error object (can include auth/transport
-    // detail) propagate as-is - normalize to a generic message. The
-    // caller (controllers/auth.js) logs err.message server-side only.
-    throw new Error('Email provider rejected the request');
-  }
+  });
 };
 
 const sendPasswordResetEmail = async (toEmail, resetUrl) => {
-  const transport = getTransporter();
-  if (!transport) {
-    throw new Error('Email service is not configured');
-  }
-
-  const fromEmail = process.env.SMTP_FROM || process.env.SMTP_USER;
-
-  try {
-    await transport.sendMail({
-      from: fromEmail,
-      to: toEmail,
-      subject: 'Reset your VerifyAI password',
-      html: `
+  await sendEmail({
+    toEmail,
+    subject: 'Reset your VerifyAI password',
+    html: `
       <div style="font-family: Arial, Helvetica, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
         <h2 style="color:#0F172A; margin: 0 0 4px;">VerifyAI</h2>
         <p style="color:#334155; font-size: 15px; margin: 0 0 20px;">Reset your password</p>
@@ -125,13 +111,7 @@ const sendPasswordResetEmail = async (toEmail, resetUrl) => {
         <p style="color:#94A3B8; font-size: 12px; margin: 0;">If you did not request a password reset, you can safely ignore this email - your password will not be changed.</p>
       </div>
     `
-    });
-  } catch (err) {
-    // Never let SMTP's own error object (can include auth/transport
-    // detail) propagate as-is - normalize to a generic message. The
-    // caller (controllers/auth.js) logs err.message server-side only.
-    throw new Error('Email provider rejected the request');
-  }
+  });
 };
 
 module.exports = { sendOtpEmail, sendLoginOtpEmail, sendPasswordResetEmail, isConfigured };
