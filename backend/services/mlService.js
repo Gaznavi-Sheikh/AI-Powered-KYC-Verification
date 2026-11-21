@@ -1,7 +1,7 @@
 const fs = require('fs');
 
 const ML_SERVICE_URL = process.env.ML_SERVICE_URL || 'http://localhost:5001';
-const ML_SERVICE_TIMEOUT_MS = 8000;
+const ML_SERVICE_TIMEOUT_MS = 60000;
 
 // Centralizes all communication with the Flask ML service - nothing else
 // in the backend should call ML_SERVICE_URL directly.
