@@ -21,6 +21,7 @@ A full-stack identity-verification platform that classifies KYC documents (Aadha
 - [Repository Structure](#repository-structure)
 - [Prerequisites](#prerequisites)
 - [Installation and Local Setup](#installation-and-local-setup)
+- [Setting Up Brevo (Email)](#setting-up-brevo-email)
 - [Environment Variables](#environment-variables)
 - [API Reference](#api-reference)
 - [Database and ML Artifacts](#database-and-ml-artifacts)
@@ -59,7 +60,8 @@ Manual KYC review — a human checking a scanned Aadhaar/PAN/Passport, retyping 
 | Verification history, admin-wide view, admin name search | Implemented |
 | Role-based access control (admin / user), user management UI | Implemented |
 | Trained face-match / forgery-detection model | Not integrated (see [Known Limitations](#known-limitations)) |
-| Cloud deployment configuration | Not present in this repository |
+| Transactional email via the Brevo API (registration OTP, login OTP, password reset) | Implemented |
+| Deployment | Step-by-step guide for Render + Vercel + an ML host — see [Deployment Notes](#deployment-notes) (no IaC/Docker files in the repo) |
 
 ## System Architecture
 
@@ -72,14 +74,14 @@ flowchart LR
     ML["Python / Flask ML service<br/>:5001"]
     DB[("MongoDB Atlas")]
     Groq["Groq API<br/>(external LLM)"]
-    SMTP["SMTP<br/>(Gmail)"]
+    Brevo["Brevo<br/>(Transactional Email API)"]
 
     Browser -- "JWT Bearer + REST/JSON" --> API
     API -- "multipart file + prior-user hashes" --> ML
     ML -- "classification, OCR, fields,<br/>risk signal, decision" --> API
     ML -- "field extraction prompt" --> Groq
     API -- "Mongoose" --> DB
-    API -- "OTP / reset emails" --> SMTP
+    API -- "OTP / reset emails (HTTPS)" --> Brevo
 ```
 
 | Component | Responsibility |
@@ -112,7 +114,7 @@ Each upload goes through five stages, executed synchronously in one `POST /api/k
 | Frontend | React 19, Vite, React Router 7 | SPA, routing |
 | Backend | Node.js, Express 5, Mongoose 9 | REST API, MongoDB ODM |
 | Auth | jsonwebtoken, bcryptjs | JWT sessions, password/OTP hashing |
-| Email | Nodemailer (Gmail SMTP) | Registration OTP, login OTP, password-reset emails |
+| Email | Brevo Transactional Email API (Node built-in `fetch`) | Registration OTP, login OTP, password-reset emails |
 | Uploads | Multer | Multipart file handling |
 | ML service | Python 3.12, Flask 3 | Inference HTTP service |
 | Classification | ai-edge-litert (TFLite runtime) | Runs the trained CNN |
@@ -148,7 +150,7 @@ Backend-to-ML communication uses Node's built-in `fetch`, not a separate HTTP cl
 └── notebooks/                  # model training/experimentation notebooks (not used at runtime)
 ```
 
-> **`trained models/kyc_classifier.tflite` is required for the ML service to start and is not currently present in this repository.** It is produced by `notebooks/Doc detection Notebooks/KYC Identification for Aadhar, Pan and Passport.ipynb` (a Keras/TensorFlow CNN trained on top of EfficientNetV2B0, exported to TFLite). There is no hosted download URL for it — you must either train it yourself from that notebook or obtain the file from whoever last had it. `notebooks/GNN Notebooks/` and `notebooks/Document_Forgery_Detection.ipynb` represent earlier experiments that are **not** wired into the running application — see [Known Limitations](#known-limitations).
+> **`trained models/kyc_classifier.tflite` is required for the ML service to start.** It is committed in the `trained models/` folder, so a normal `git clone` includes it. It was produced by `notebooks/Doc detection Notebooks/KYC Identification for Aadhar, Pan and Passport.ipynb` (a Keras/TensorFlow CNN trained on top of EfficientNetV2B0, exported to TFLite) — retrain from that notebook if you want to replace it. `notebooks/GNN Notebooks/` and `notebooks/Document_Forgery_Detection.ipynb` represent earlier experiments that are **not** wired into the running application — see [Known Limitations](#known-limitations).
 
 ## Prerequisites
 
@@ -156,8 +158,8 @@ Backend-to-ML communication uses Node's built-in `fetch`, not a separate HTTP cl
 - **Python** 3.12 (pinned package versions in `ml-service/requirements.txt` target this version)
 - A **MongoDB Atlas** cluster (or any reachable MongoDB instance) and its connection string
 - A **Groq API key** — [console.groq.com](https://console.groq.com)
-- A **Gmail account with an App Password** for SMTP (used for OTP/reset emails) — or another SMTP provider, adjusting `SMTP_*` variables accordingly
-- The `trained models/kyc_classifier.tflite` artifact described above
+- A free **[Brevo](https://www.brevo.com) account** with an API key and a verified sender address (used for OTP/reset emails) — see [Setting Up Brevo](#setting-up-brevo-email)
+- The `trained models/` folder (included in the repo — nothing to download)
 
 Installing `ml-service`'s Python dependencies (PyTorch, EasyOCR, etc.) takes noticeably longer than the Node installs — budget several minutes, not seconds.
 
@@ -178,7 +180,6 @@ python3 -m venv venv
 source venv/bin/activate        # Windows PowerShell: venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 cp .env.example .env            # then fill in GROQ_API_KEY
-# Place trained models/kyc_classifier.tflite at the repo root (see note above)
 python app.py
 ```
 Expected: the process starts and listens on port 5001 (`PORT` in `.env`, default `5001`). `GET /health` should respond once it's up.
@@ -187,7 +188,7 @@ Expected: the process starts and listens on port 5001 (`PORT` in `.env`, default
 ```bash
 cd backend
 npm install
-cp .env.example .env            # then fill in MONGODB_URI, JWT_SECRET, SMTP_*
+cp .env.example .env            # then fill in MONGODB_URI, JWT_SECRET, BREVO_*
 node server.js
 ```
 Expected console output: `Server running in development mode on port 5000` and `MongoDB Connected: <host>`.
@@ -209,6 +210,29 @@ node scripts/promoteAdmin.js
 ```
 This script is hardcoded to promote one specific email address, set via the `INITIAL_ADMIN_EMAIL` constant in `backend/scripts/promoteAdmin.js` — edit that constant to your own account's email before running it. It is safe to re-run (no-ops if already an admin) and never runs automatically on server startup.
 
+## Setting Up Brevo (Email)
+
+The backend sends three emails (registration OTP, login OTP, password reset) through the [Brevo Transactional Email API](https://developers.brevo.com/reference/sendtransacemail) (`POST https://api.brevo.com/v3/smtp/email`). Without working Brevo settings, registration and 2FA login cannot complete, because both need an emailed code.
+
+1. Create a free account at [brevo.com](https://www.brevo.com) and finish account activation.
+2. **Create an API key:** Brevo dashboard → profile menu → **SMTP & API** → **API Keys** → *Generate a new API key*. Copy it (starts with `xkeysib-`). This is **not** the SMTP key.
+3. **Verify a sender:** **Senders, Domains & Dedicated IPs** → **Senders** → add the address you want mails to come from and confirm it via the email Brevo sends. Unverified senders are rejected.
+4. **IP restrictions:** Brevo may block API calls from IPs it doesn't know. Either turn IP blocking off, or add your machine's IP (IPv4 **and** IPv6) at [app.brevo.com/security/authorised_ips](https://app.brevo.com/security/authorised_ips). Hosted deployments (e.g. Render) don't have a fixed IP, so blocking is usually turned off there.
+5. Put the values in `backend/.env`:
+   ```
+   BREVO_API_KEY=xkeysib-...
+   BREVO_SENDER_EMAIL=you@example.com
+   BREVO_SENDER_NAME=VerifyAI
+   ```
+6. Restart the backend, then try a registration OTP to confirm:
+   ```bash
+   curl -X POST http://localhost:5000/api/auth/send-email-otp \
+     -H 'Content-Type: application/json' -d '{"email":"you@example.com"}'
+   ```
+   Expected: `{"success":true,"message":"Verification code sent to your email."}` and an email in your inbox (check spam). Delivery status is also visible in Brevo → **Transactional → Logs**. If it fails, the backend log prints `Brevo email API error: { status, code, message }` — the API key and recipient are never logged.
+
+The email code lives in `backend/services/emailService.js` (no Nodemailer or SMTP is used any more).
+
 ## Environment Variables
 
 ### `backend/.env`
@@ -220,8 +244,9 @@ This script is hardcoded to promote one specific email address, set via the `INI
 | `PORT` | No (default `5000`) | Backend listen port |
 | `NODE_ENV` | No | `development` / `production` |
 | `ML_SERVICE_URL` | Yes | Base URL of the Flask ML service, e.g. `http://localhost:5001` |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASS` | Yes | SMTP credentials for sending OTP/reset emails |
-| `SMTP_FROM` | No | Display "From" address; falls back to `SMTP_USER` |
+| `BREVO_API_KEY` | Yes | Brevo API key (starts with `xkeysib-`) used to send OTP/reset emails. Not an SMTP key. |
+| `BREVO_SENDER_EMAIL` | Yes | Sender address — must be verified in Brevo (see [Setting Up Brevo](#setting-up-brevo-email)) |
+| `BREVO_SENDER_NAME` | No | Display name shown as the sender, e.g. `VerifyAI` |
 | `FRONTEND_URL` | Yes | Used to build the password-reset link sent by email |
 
 ### `frontend/.env`
@@ -318,17 +343,48 @@ MongoDB Atlas via Mongoose, five collections:
 
 **Cross-user privacy in the graph stage:** before any document is sent to the ML service, `backend/services/identityHash.js` hashes other users' extracted identifiers (e.g. PAN/Aadhaar numbers) so the graph stage can detect a shared identifier across records without the ML service ever seeing another user's raw PII.
 
-**Required local artifact:** `trained models/kyc_classifier.tflite` (see [Repository Structure](#repository-structure)) — not currently tracked in this repository; must be trained or obtained separately.
+**Required local artifact:** `trained models/kyc_classifier.tflite` (see [Repository Structure](#repository-structure)) — committed to the repository.
 
 ## Deployment Notes
 
-**This repository contains no deployment configuration** — no Dockerfile, no PM2/process-manager config, no infrastructure-as-code, and no AWS SDK/credentials anywhere in `package.json` or `requirements.txt`. All development and testing so far has been local (`node server.js`, `python app.py`, `vite dev`). A separate PDF (`KYC_System_Deployment_Guide.pdf`) in this repository describes an earlier, more elaborate planned AWS EC2/S3 architecture with a trained GNN — that document reflects an **earlier design that was not carried into the current implementation** (the current `graph.py` is explicitly deterministic; see [Engineering Decisions](#engineering-decisions)) and should not be treated as a description of this codebase.
+The repository contains no Dockerfile, process-manager config or infrastructure-as-code. The steps below describe a deployment that has been run by hand: **backend on Render, frontend on Vercel, ML service on a host with at least 2 GB RAM**. (A separate PDF, `KYC_System_Deployment_Guide.pdf`, describes an earlier AWS design that was not carried into the current implementation — don't treat it as a description of this codebase.)
 
-If you deploy this yourself, at minimum:
-- Run the backend and ML service as separate processes/containers (they have very different dependency footprints).
-- Put a reverse proxy with HTTPS in front of the backend; never expose the Flask ML service's port publicly — only the backend should reach it, over a private network.
+Deploy in this order, because each step needs the previous URL.
+
+**1. MongoDB Atlas** — create a cluster and a database user, copy the `mongodb+srv://...` string and add a database name (e.g. `.../ai-kyc?retryWrites=true&w=majority`). Under **Network Access**, allow `0.0.0.0/0` (hosted services have no fixed IP).
+
+**2. ML service** — needs roughly 1.5–2 GB RAM (PyTorch + EasyOCR + TFLite), so Render's free 512 MB instance is not enough.
+- *Render (simplest):* New → Web Service, Python, **Starter** plan or larger. Leave Root Directory blank. Build: `cd ml-service && pip install -r requirements.txt`. Start: `cd ml-service && gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --timeout 120`. Env: `PYTHON_VERSION=3.12.3`, `GROQ_API_KEY`, `FLASK_DEBUG=false`. (The model files sit in `../trained models/`, which is why the root directory stays blank.)
+- *Other hosts:* any Linux host with Python 3.12 and ≥2 GB RAM works the same way. Hugging Face Spaces can host it too, but needs a small wrapper entrypoint and different `torch`/`pillow` pins that are not part of this repo.
+- Check `GET /health` → `model_loaded`, `ocr_loaded` and `groq_configured` should all be `true`.
+
+**3. Backend (Render Web Service)**
+- Root Directory `backend`, Build `npm install`, Start `node server.js`, branch `main`.
+- Environment variables:
+
+| Key | Value |
+|---|---|
+| `NODE_ENV` | `production` |
+| `MONGODB_URI` | Atlas string from step 1 |
+| `JWT_SECRET` | A long random string (`node -e "console.log(require('crypto').randomBytes(48).toString('hex'))"`) |
+| `BREVO_API_KEY`, `BREVO_SENDER_EMAIL`, `BREVO_SENDER_NAME` | See [Setting Up Brevo](#setting-up-brevo-email) — turn Brevo IP blocking off, Render's IPs change |
+| `ML_SERVICE_URL` | Public URL of the ML service, no trailing slash, no `/predict` |
+| `FRONTEND_URL` | Your Vercel URL, no trailing slash (used in password-reset links) |
+
+  Don't set `PORT` — Render provides it. `.env` files are gitignored and are **not** deployed, so every variable must be entered in the dashboard.
+- The backend waits up to 60 s for the ML service (`ML_SERVICE_TIMEOUT_MS` in `backend/services/mlService.js`), to allow for slow CPU OCR and cold starts.
+
+**4. Frontend (Vercel)**
+- Root Directory `frontend` (framework preset: Vite). `frontend/vercel.json` already rewrites all routes to `index.html`.
+- Environment variable: `VITE_API_BASE=https://<your-backend>.onrender.com/api` (with `/api`, no trailing slash). Vite bakes this in at build time, so **redeploy after changing it**.
+
+**5. Go back to Render** and set `FRONTEND_URL` to the final Vercel URL.
+
+**Free-tier notes:** Render's free web services sleep when idle, so the first request can take 30–60 s.
+
+Other things to do before real use:
+- Never expose the ML service's port beyond what the backend needs; it has no authentication of its own, and each `/predict` call uses your Groq quota.
 - Set `cors()` (currently unrestricted — see [Security and Privacy](#security-and-privacy)) to your actual frontend origin.
-- Serve the built frontend (`npm run build` → `frontend/dist/`) from any static host with HTTPS.
 
 ## Security and Privacy
 
@@ -369,18 +425,20 @@ No CI workflow is configured in this repository.
 | EasyOCR very slow on first request | Expected — model weights load/warm up on first use; CPU-only inference |
 | Backend can't reach the ML service | Check `ML_SERVICE_URL` and that the Flask process is actually running |
 | CORS error in the browser console | Confirm the frontend origin and that the backend is reachable at `VITE_API_BASE` |
-| OTP/reset emails never arrive | Check `SMTP_*` values; Gmail requires an App Password, not your normal account password |
+| `Email service is not configured` in the backend log | `BREVO_API_KEY` or `BREVO_SENDER_EMAIL` is missing from `backend/.env` (restart the backend after editing) |
+| `Brevo email API error` with status 401 and "unrecognised IP address" | Brevo IP blocking is on — add your IP, or turn it off at [app.brevo.com/security/authorised_ips](https://app.brevo.com/security/authorised_ips) |
+| `Brevo email API error` with status 400 about the sender | `BREVO_SENDER_EMAIL` is not a verified sender in Brevo |
+| OTP/reset emails never arrive (no error) | Check spam; check Brevo → Transactional → Logs for delivery status. The forgot-password endpoint always returns 200 by design — failures appear only in the backend log |
 | 401 on every request | Missing/expired `Authorization: Bearer <token>` header |
 | 403 on admin routes | The account's `role` is `user` — promote it with `scripts/promoteAdmin.js` or via another admin |
 | MongoDB connection failure | Check `MONGODB_URI` and that your IP is allow-listed in Atlas network access |
 
 ## Known Limitations
 
-- `trained models/kyc_classifier.tflite` is required but not currently tracked in this repository.
 - No automated test suite for backend or frontend.
 - No rate limiting on login/registration endpoints.
 - Password change/reset does not revoke existing sessions.
-- No deployment/infrastructure configuration is included.
+- No Dockerfile or infrastructure-as-code is included; deployment is documented as manual steps only.
 - `notebooks/GNN Notebooks/` and `notebooks/Document_Forgery_Detection.ipynb` represent experiments that were never integrated into the running application.
 - The in-memory rate limiter (used for password-reset endpoints) is single-process only.
 
